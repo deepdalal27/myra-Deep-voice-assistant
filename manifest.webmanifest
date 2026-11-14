@@ -1,0 +1,9 @@
+{
+  "name": "Myra",
+  "short_name": "Myra",
+  "description": "Voice assistant for CA Deep Dalal",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0f1420",
+  "theme_color": "#0f1420"
+}
