@@ -15,8 +15,10 @@ Source: [`claude/myra.html`](claude/myra.html). It is published as a private Cla
 - **iPhone, Safari, or if the mic reports a problem:** tap the text box, then the microphone on your keyboard, and speak. With "Send when I pause" ticked she sends it herself and replies using the phone's own voice.
 - The first time, Claude asks your permission for the microphone, for Claude to answer, and for Gmail and Calendar.
 - **Memory**: she saves facts, preferences, people, tasks and corrections on her own, in storage tied to your Claude account, so they follow you across devices. The Memory button shows every note and lets you delete any of them.
-- **Gmail and Calendar**: she can search and read your mail, save drafts for you to send, and read your calendar. She cannot send email.
-- She cannot browse the web, post to Instagram or edit code from the page. Those stay in the Claude workspace.
+- **Email**: she searches and reads your Gmail, saves drafts, and sends emails and replies. Before sending she shows the email and reads it back; it goes only after you say yes or tap Send. Your Gmail signature is added automatically.
+- **Workspace hand-off**: for live web search and news, Instagram (@findeependence comments, DMs, posts), GitHub and long research, she passes the task to the Claude workspace session and reads you the answer. Anything public still waits for your yes.
+- **Automatic effort**: she picks a lighter or heavier Claude model tier from what you asked.
+- **Look**: FinDeependence colours, fonts and logo.
 
 "Learning" means her saved notes, which shape every reply. The underlying model is not retrained.
 
