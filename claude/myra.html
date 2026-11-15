@@ -89,7 +89,7 @@
     <label><input type="checkbox" id="handsfree"> Keep listening after each answer</label>
     <label><input type="checkbox" id="auto"> Send when I pause</label>
     <label id="voiceWrap" hidden>Myra's voice <select id="voice">
-      <option value="airy">Airy</option><option value="glassy">Glassy</option><option value="rounded">Rounded</option><option value="buttery">Buttery</option>
+      <option value="device">Female (device voice)</option><option value="airy">Claude: Airy</option><option value="glassy">Claude: Glassy</option><option value="rounded">Claude: Rounded</option><option value="buttery">Claude: Buttery</option>
     </select></label>
     <label>I speak <select id="lang">
       <option value="">Auto</option><option value="en">English</option><option value="hi">Hindi</option><option value="gu">Gujarati</option>
@@ -298,35 +298,54 @@ async function speak(text) {
   if (!clean) return;
   speaking = true; setMic("speaking"); setStatus("Speaking. Tap to stop.");
   try {
-    if (tts) await tts.speak(lines(clean), { voice: $("voice").value });
-    else await browserSpeak(clean);
+    const choice = $("voice").value;
+    let spoken = false;
+    if (choice === "device" || !tts) spoken = await browserSpeak(clean, Boolean(tts));
+    if (!spoken && tts) await tts.speak(lines(clean), { voice: choice === "device" ? "airy" : choice });
   } catch {}
   speaking = false; setMic("");
 }
-function browserSpeak(clean) {
+const FEMALE = /female|woman|heera|veena|swara|neerja|aditi|raveena|kalpana|lekha|kajal|dhwani|samantha|zira|susan|hazel|karen|moira|tessa|sonia|libby|jenny|aria|google uk english female|google us english|google हिन्दी/i;
+function deviceVoices() {
   return new Promise((resolve) => {
     let synth; try { synth = window.speechSynthesis; } catch {}
-    if (!synth || typeof SpeechSynthesisUtterance === "undefined") return resolve();
+    if (!synth || typeof SpeechSynthesisUtterance === "undefined") return resolve([]);
+    const now = synth.getVoices();
+    if (now.length) return resolve(now);
+    const t = setTimeout(() => resolve(synth.getVoices()), 1200);
+    try { synth.addEventListener("voiceschanged", () => { clearTimeout(t); resolve(synth.getVoices()); }, { once: true }); } catch {}
+  });
+}
+// Speaks with the device's own voice, choosing a female one. Resolves false when nothing was spoken.
+// femaleOnly: give up (so the caller can use a Claude voice) when the device has no female voice for the language.
+async function browserSpeak(clean, femaleOnly) {
+  const vs = await deviceVoices();
+  let synth; try { synth = window.speechSynthesis; } catch {}
+  if (!synth || typeof SpeechSynthesisUtterance === "undefined") return false;
+  const want = /[઀-૿]/.test(clean) ? "gu" : /[ऀ-ॿ]/.test(clean) ? "hi" : "en";
+  const fem = (v) => FEMALE.test(v.name);
+  const inLang = vs.filter((v) => v.lang.replace("_", "-") === want + "-IN"), anyLang = vs.filter((v) => v.lang.startsWith(want));
+  let voice = inLang.find(fem) || anyLang.find(fem) || null;
+  if (!voice && femaleOnly) return false;
+  voice = voice || inLang[0] || anyLang[0] || null;
+  return new Promise((resolve) => {
     try {
       synth.cancel();
-      const want = /[\u0A80-\u0AFF]/.test(clean) ? "gu" : /[\u0900-\u097F]/.test(clean) ? "hi" : "en";
-      const vs = synth.getVoices();
-      const fem = (v) => /female|woman|heera|veena|swara|neerja|aditi|raveena|kalpana|lekha|kajal|samantha|zira|susan|karen|moira|tessa|google (uk english female|us english|हिन्दी)/i.test(v.name);
-      const inLang = vs.filter((v) => v.lang.replace("_", "-") === want + "-IN"), anyLang = vs.filter((v) => v.lang.startsWith(want));
-      const voice = inLang.find(fem) || anyLang.find(fem) || inLang[0] || anyLang[0] || null;
-      const parts = lines(clean); let left = parts.length;
-      const done = () => { if (--left <= 0) resolve(); };
-      const guard = setTimeout(resolve, 120000);
+      const parts = lines(clean); let left = parts.length, started = false;
+      const guard = setTimeout(() => resolve(started), 120000);
+      const finish = (ok) => { clearTimeout(guard); resolve(ok); };
       for (const p of parts) {
         const u = new SpeechSynthesisUtterance(p.text);
         if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = want + "-IN";
-        u.onend = done; u.onerror = () => { clearTimeout(guard); resolve(); };
+        u.onstart = () => { started = true; };
+        u.onend = () => { started = true; if (--left <= 0) finish(true); };
+        u.onerror = (ev) => finish(started || ev.error === "interrupted" || ev.error === "canceled");
         synth.speak(u);
       }
-    } catch { resolve(); }
+    } catch { resolve(false); }
   });
 }
-function stopSpeaking() { try { if (tts) tts.stop(); else window.speechSynthesis.cancel(); } catch {} }
+function stopSpeaking() { try { if (tts) tts.stop(); } catch {} try { window.speechSynthesis.cancel(); } catch {} }
 
 /* ---------- listening ---------- */
 let heard = "", partial = "", quiet = null, pending = false;
@@ -433,9 +452,9 @@ $("handsfree").checked = local.get("myra_handsfree", false);
 $("handsfree").onchange = () => local.set("myra_handsfree", $("handsfree").checked);
 $("lang").value = local.get("myra_lang", "");
 $("lang").onchange = () => local.set("myra_lang", $("lang").value);
-$("voice").value = local.get("myra_voice", "airy");
+$("voice").value = local.get("myra_voice2", "device");
 $("voice").onchange = () => {
-  local.set("myra_voice", $("voice").value);
+  local.set("myra_voice2", $("voice").value);
   if (!busy && !listening) speak("Hi Deep, this is Myra. How does this voice sound?").then(() => setStatus(dict && !dictBroken ? IDLE : KEYBOARD_HELP));
 };
 $("memBtn").onclick = () => { renderMemory(); $("memDlg").showModal(); };
@@ -450,7 +469,8 @@ async function boot() {
   let user;
   [sample, dict, tts, db, user, mcp] = await Promise.all(["sample", "dictation", "tts", "db", "user", "mcp"].map(use));
   if (dict) wireDictation();
-  $("voiceWrap").hidden = !tts;
+  $("voiceWrap").hidden = false;
+  deviceVoices();
 
   let uid = null;
   try { uid = user ? await user.id() : null; } catch {}
