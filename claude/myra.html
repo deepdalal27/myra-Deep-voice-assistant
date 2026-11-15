@@ -658,8 +658,9 @@ async function boot() {
   if (!sample) { add("err", "Open this page on claude.ai while signed in. Myra thinks with your Claude account, so she cannot answer here."); setStatus("Not connected to Claude."); return; }
   add("note", memory.length ? `Myra is ready and remembers ${memory.length} thing${memory.length === 1 ? "" : "s"} about you.` : "Myra is ready. Tell her about yourself and she will remember.");
   if (!memCol) add("note", "Memory is being kept on this device only.");
-  $("auto").checked = local.get("myra_auto", !dict);
+  $("auto").checked = dict ? local.get("myra_auto", false) : true;
   setStatus(dict ? IDLE : KEYBOARD_HELP);
+  if (!dict) add("note", "To talk on this phone: 1. Tap the green mic. 2. Tap the microphone key on your keyboard (bottom right on iPhone). 3. Speak, then pause, and I will send it and answer aloud. No microphone key? On iPhone turn on Settings, General, Keyboard, Enable Dictation.");
 }
 boot();
 </script>
