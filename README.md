@@ -10,8 +10,9 @@ There are two versions in this repository.
 
 Source: [`claude/myra.html`](claude/myra.html). It is published as a private Claude artifact, so it runs on your Claude account. There is no API key and no separate bill; it uses your plan's normal usage allowance.
 
-- Open the link while signed in to claude.ai, in Chrome on a computer or Android (voice needs a Chromium browser; elsewhere you can type).
-- Tap the mic and speak. She sends your words when you pause, and replies in a Claude voice.
+- Open the link while signed in to claude.ai.
+- **Chrome on a computer or Android:** tap the mic and speak. She sends your words when you pause, and replies in a Claude voice.
+- **iPhone, Safari, or if the mic reports a problem:** tap the text box, then the microphone on your keyboard, and speak. With "Send when I pause" ticked she sends it herself and replies using the phone's own voice.
 - The first time, Claude asks your permission for the microphone, for Claude to answer, and for Gmail and Calendar.
 - **Memory**: she saves facts, preferences, people, tasks and corrections on her own, in storage tied to your Claude account, so they follow you across devices. The Memory button shows every note and lets you delete any of them.
 - **Gmail and Calendar**: she can search and read your mail, save drafts for you to send, and read your calendar. She cannot send email.

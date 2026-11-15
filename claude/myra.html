@@ -87,12 +87,13 @@
   </button>
   <div class="opts">
     <label><input type="checkbox" id="handsfree"> Keep listening after each answer</label>
+    <label><input type="checkbox" id="auto"> Send when I pause</label>
     <label>I speak <select id="lang">
       <option value="">Auto</option><option value="en">English</option><option value="hi">Hindi</option><option value="gu">Gujarati</option>
     </select></label>
   </div>
   <form class="row" id="typeForm">
-    <input type="text" id="typed" placeholder="Or type here" autocomplete="off" aria-label="Type a message">
+    <input type="text" id="typed" placeholder="Type, or use your keyboard's microphone" autocomplete="off" aria-label="Type a message">
     <button class="ghost" type="submit">Send</button>
   </form>
 </footer>
@@ -283,7 +284,7 @@ function speechText(t) { return t.replace(/```[\s\S]*?```/g, " ").replace(/https
 function lines(t) {
   const out = []; let cur = "";
   for (const s of t.match(/[^.!?।]+[.!?।]*\s*/g) || [t]) {
-    if ((cur + s).length > 500 && cur) { out.push({ text: cur.trim() }); cur = ""; }
+    if ((cur + s).length > 220 && cur) { out.push({ text: cur.trim() }); cur = ""; }
     cur += s;
   }
   if (cur.trim()) out.push({ text: cur.trim() });
@@ -305,8 +306,18 @@ function browserSpeak(clean) {
     if (!synth || typeof SpeechSynthesisUtterance === "undefined") return resolve();
     try {
       synth.cancel();
-      const u = new SpeechSynthesisUtterance(clean); u.lang = "en-IN"; u.onend = resolve; u.onerror = resolve;
-      synth.speak(u);
+      const want = /[\u0A80-\u0AFF]/.test(clean) ? "gu" : /[\u0900-\u097F]/.test(clean) ? "hi" : "en";
+      const vs = synth.getVoices();
+      const voice = vs.find((v) => v.lang === want + "-IN") || vs.find((v) => v.lang.startsWith(want)) || null;
+      const parts = lines(clean); let left = parts.length;
+      const done = () => { if (--left <= 0) resolve(); };
+      const guard = setTimeout(resolve, 120000);
+      for (const p of parts) {
+        const u = new SpeechSynthesisUtterance(p.text);
+        if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = want + "-IN";
+        u.onend = done; u.onerror = () => { clearTimeout(guard); resolve(); };
+        synth.speak(u);
+      }
     } catch { resolve(); }
   });
 }
@@ -314,6 +325,29 @@ function stopSpeaking() { try { if (tts) tts.stop(); else window.speechSynthesis
 
 /* ---------- listening ---------- */
 let heard = "", partial = "", quiet = null, pending = false;
+let dictBroken = false, tryEnglish = false, dictFails = 0, autoTimer = null;
+const KEYBOARD_HELP = "Tap the box below, then the microphone on your keyboard, and speak. I will send it when you pause.";
+function keyboardMode(why) {
+  $("auto").checked = true; local.set("myra_auto", true);
+  setStatus((why ? why + " " : "") + KEYBOARD_HELP);
+  try { $("typed").focus(); } catch {}
+}
+function dictFailed(code, lang) {
+  if ((code === "unavailable" || code === "invalid_argument") && lang) {
+    $("lang").value = ""; local.set("myra_lang", ""); tryEnglish = code === "unavailable" && lang !== "en";
+    setStatus("Listening is not offered in that language. Tap the mic again."); return;
+  }
+  if (code === "unavailable") {
+    if (!tryEnglish) { tryEnglish = true; setStatus("Listening did not start in your browser's language. Tap the mic again and I will try English."); return; }
+    dictBroken = true; keyboardMode("Claude's listening is not offered for this account or browser."); return;
+  }
+  if (code === "not_granted") { dictBroken = true; keyboardMode("The microphone is blocked for this page."); return; }
+  if (code === "rate_limited") { setStatus("Listening is busy right now. Wait a few seconds and tap again."); return; }
+  if (code === "no_gesture") { $("handsfree").checked = false; setStatus(IDLE); return; }
+  if (code === "dismissed" || code === "stopped") { setStatus(IDLE); return; }
+  if (++dictFails >= 2) { dictBroken = true; keyboardMode("Claude's speech service keeps failing here."); return; }
+  setStatus("The speech service failed (" + (code || "unknown") + "). Tap the mic to try again.");
+}
 const PAUSE_MS = 1800;
 function armQuiet() {
   clearTimeout(quiet);
@@ -323,32 +357,26 @@ function wireDictation() {
   dict.onPartial(({ text }) => { partial = text; if (listening) { setStatus((heard + " " + partial).trim() || "Listening…"); if (text) armQuiet(); } });
   dict.onFinal(({ text }) => { heard += text; partial = ""; if (listening) { setStatus(heard.trim()); armQuiet(); } });
   dict.onState(({ state, reason }) => {
-    if (state === "listening") { listening = true; setMic("listening"); if (!heard) setStatus("Listening…"); }
+    if (state === "listening") { listening = true; dictFails = 0; setMic("listening"); if (!heard) setStatus("Listening…"); }
     if (state === "idle") {
       clearTimeout(quiet);
-      const said = heard.trim(); listening = false; heard = ""; partial = "";
+      const said = heard.trim(), was = listening; listening = false; heard = ""; partial = "";
       if (!busy) setMic("");
       if (said && (pending || reason === "stopped" || reason === "viewer_stopped" || reason === "time_limit")) { pending = false; handle(said); return; }
       pending = false;
       if (busy) return;
-      if (reason === "not_granted") { $("handsfree").checked = false; setStatus("Microphone permission was declined. You can type below."); }
-      else if (reason === "unavailable" || reason === "upstream_error") setStatus("Listening is not working right now. You can type below.");
+      if (!was) return;   // a start that failed is reported by start()'s rejection
+      if (["not_granted", "unavailable", "upstream_error", "rate_limited"].includes(reason)) dictFailed(reason, "");
       else setStatus(IDLE);
     }
   });
 }
-function listen(fromTap) {
-  if (!dict || listening || busy) return;
+function listen() {
+  if (!dict || dictBroken || listening || busy) return;
   heard = ""; partial = ""; pending = false;
-  const lang = $("lang").value;
+  const lang = $("lang").value || (tryEnglish ? "en" : "");
   // Called straight from the tap: nothing awaited before start().
-  dict.start(lang ? { language: lang } : undefined).catch((e) => {
-    if (e && e.code === "invalid_argument" && lang) { $("lang").value = ""; setStatus("That language is not offered. Tap the mic again."); return; }
-    if (e && e.code === "no_gesture") { $("handsfree").checked = false; setStatus(IDLE); return; }
-    if (e && e.code === "not_granted") { setStatus("Microphone permission was declined. You can type below."); return; }
-    if (e && (e.code === "dismissed" || e.code === "stopped")) { setStatus(IDLE); return; }
-    setStatus(fromTap ? "Listening is not working right now. You can type below." : IDLE);
-  });
+  dict.start(lang ? { language: lang } : undefined).catch((e) => dictFailed(e && e.code, $("lang").value));
 }
 
 async function handle(text) {
@@ -361,15 +389,19 @@ async function handle(text) {
   catch (e) { reply = explain(e); add("err", reply); }
   await speak(reply);
   busy = false; setMic("");
-  if ($("handsfree").checked && dict) { setStatus(IDLE); listen(false); } else setStatus(dict ? IDLE : "Type below to talk to Myra.");
+  const voiceOk = dict && !dictBroken;
+  if ($("handsfree").checked && voiceOk) { setStatus(IDLE); listen(); }
+  else setStatus(voiceOk ? IDLE : KEYBOARD_HELP);
+  if (!voiceOk) { try { $("typed").focus(); } catch {} }
+  armAuto();
 }
 
 mic.onclick = () => {
   if (speaking) { stopSpeaking(); return; }
   if (busy) return;
-  if (!dict) { setStatus("Listening is not offered in this browser. Use Chrome on a computer or Android, or type below."); $("typed").focus(); return; }
+  if (!dict || dictBroken) { keyboardMode(""); return; }
   if (listening) { pending = true; dict.stop().catch(() => {}); return; }
-  listen(true);
+  listen();
 };
 $("typeForm").addEventListener("submit", (ev) => {
   ev.preventDefault();
@@ -379,6 +411,19 @@ $("typeForm").addEventListener("submit", (ev) => {
   if (listening) { heard = ""; dict.stop().catch(() => {}); }
   handle(t);
 });
+function armAuto() {
+  clearTimeout(autoTimer);
+  if (!$("auto").checked || busy || !$("typed").value.trim()) return;
+  autoTimer = setTimeout(() => { if (!busy && $("auto").checked && $("typed").value.trim()) $("typeForm").requestSubmit(); }, 2500);
+}
+$("typed").addEventListener("input", armAuto);
+$("auto").onchange = () => { local.set("myra_auto", $("auto").checked); armAuto(); };
+// Phones only let a page speak after a touch, so unlock the browser voice on the first one.
+let primed = false;
+document.addEventListener("pointerdown", () => {
+  if (primed || tts) return; primed = true;
+  try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; window.speechSynthesis.speak(u); } catch {}
+}, true);
 $("handsfree").checked = local.get("myra_handsfree", false);
 $("handsfree").onchange = () => local.set("myra_handsfree", $("handsfree").checked);
 $("lang").value = local.get("myra_lang", "");
@@ -415,7 +460,8 @@ async function boot() {
   if (!sample) { add("err", "Open this page on claude.ai while signed in. Myra thinks with your Claude account, so she cannot answer here."); setStatus("Not connected to Claude."); return; }
   add("note", memory.length ? `Myra is ready and remembers ${memory.length} thing${memory.length === 1 ? "" : "s"} about you.` : "Myra is ready. Tell her about yourself and she will remember.");
   if (!memCol) add("note", "Memory is being kept on this device only.");
-  setStatus(dict ? IDLE : "Listening is not offered in this browser. Type below, or open in Chrome.");
+  $("auto").checked = local.get("myra_auto", !dict);
+  setStatus(dict ? IDLE : KEYBOARD_HELP);
 }
 boot();
 </script>
